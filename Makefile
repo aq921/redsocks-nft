@@ -1,111 +1,65 @@
--include make.conf
-OBJS := parser.o main.o redsocks.o log.o http-connect.o socks4.o socks5.o http-relay.o base.o base64.o md5.o http-auth.o utils.o redudp.o dnstc.o dnsu2t.o gen/version.o
-ifeq ($(DBG_BUILD),1)
-OBJS += debug.o
-endif
-SRCS := $(OBJS:.o=.c)
-CONF := config.h
-DEPS := .depend
-OUT := redsocks
-VERSION := 0.5
+#
+# Copyright (C) 2014-2015 OpenWrt.org
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
 
-LIBS := -levent_core
-ifeq ($(DBG_BUILD),1)
-# -levent_extra is required only for `http` and `debug`
-LIBS += -levent_extra
-endif
-CFLAGS += -g -O2
-# _GNU_SOURCE is used to get splice(2), it also implies _BSD_SOURCE
-override CFLAGS += -std=c99 -D_XOPEN_SOURCE=600 -D_DEFAULT_SOURCE -D_GNU_SOURCE -Wall
+include $(TOPDIR)/rules.mk
 
-all: $(OUT)
+PKG_NAME:=redsocks-nft
+PKG_VERSION:=1.0
+PKG_RELEASE:=1
 
-.PHONY: all clean distclean test
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
+PKG_SOURCE_URL:=https://github.com/aq921/redsocks-nft.git
+#PKG_SOURCE_VERSION:=19b822e345f6a291f6cff6b168f1cfdfeeb2cd7d
 
-tags: *.c *.h
-	ctags -R
+#PKG_MAINTAINER:=Johannes Morgenroth <jm@m-network.de>
+#PKG_LICENSE:=Apache-2.0
 
-$(CONF):
-	@case `uname` in \
-	Linux*) \
-		echo "#define USE_IPTABLES" >$(CONF) \
-		;; \
-	OpenBSD) \
-		echo "#define USE_PF" >$(CONF) \
-		;; \
-	*) \
-		echo "Unknown system, only generic firewall code is compiled" 1>&2; \
-		echo "/* Unknown system, only generic firewall code is compiled */" >$(CONF) \
-		;; \
-	esac
-ifeq ($(DBG_BUILD),1)
-	echo "#define DBG_BUILD 1" >>$(CONF)
-endif
+include $(INCLUDE_DIR)/package.mk
 
-# Dependency on .git is useful to rebuild `version.c' after commit, but it breaks non-git builds.
-gen/version.c: *.c *.h gen/.build
-	rm -f $@.tmp
-	echo '/* this file is auto-generated during build */' > $@.tmp
-	echo '#include "../version.h"' >> $@.tmp
-	echo 'const char* redsocks_version = ' >> $@.tmp
-	if [ -d .git ]; then \
-		echo '"redsocks.git/'`git describe --tags`'"'; \
-		if [ `git status --porcelain | grep -v -c '^??'` != 0 ]; then \
-			echo '"'"-unclean-$$(date --rfc-3339=seconds | tr ' ' 'T')-$${USER}@$$(uname -n)"'"'; \
-		fi \
-	else \
-		echo '"redsocks/$(VERSION)"'; \
-	fi >> $@.tmp
-	echo ';' >> $@.tmp
-	mv -f $@.tmp $@
+define Package/redsocks-nft
+  SECTION:=net
+  CATEGORY:=Network
+  DEPENDS:=+libevent2 +libevent2-core +libevent2-extra
+  TITLE:=Redirect any TCP connection to a SOCKS or HTTPS proxy server
+endef
 
-gen/.build:
-	mkdir -p gen
-	touch $@
+define Package/redsocks-nft/conffiles
+/etc/config/redsocks
+endef
 
-base.c: $(CONF)
+define Package/redsocks-nft/description
+ Redsocks is a daemon running on the local system, that will transparently
+ tunnel any TCP connection via a remote SOCKS4, SOCKS5 or HTTP proxy server. It
+ uses the system firewall's redirection facility to intercept TCP connections,
+ thus the redirection is system-wide, with fine-grained control, and does
+ not depend on LD_PRELOAD libraries.
+ 
+ Redsocks supports tunneling TCP connections and UDP packets. It has
+ authentication support for both, SOCKS and HTTP proxies.
+ 
+ Also included is a small DNS server returning answers with the "truncated" flag
+ set for any UDP query, forcing the resolver to use TCP.
+endef
 
-$(DEPS): $(SRCS)
-	gcc -MM $(SRCS) 2>/dev/null >$(DEPS) || \
-	( \
-		for I in $(wildcard *.h); do \
-			export $${I//[-.]/_}_DEPS="`sed '/^\#[ \t]*include \?"\(.*\)".*/!d;s//\1/' $$I`"; \
-		done; \
-		echo -n >$(DEPS); \
-		for SRC in $(SRCS); do \
-			echo -n "$${SRC%.c}.o: " >>$(DEPS); \
-			export SRC_DEPS="`sed '/\#[ \t]*include \?"\(.*\)".*/!d;s//\1/' $$SRC | sort`"; \
-			while true; do \
-				export SRC_DEPS_OLD="$$SRC_DEPS"; \
-				export SRC_DEEP_DEPS=""; \
-				for HDR in $$SRC_DEPS; do \
-					eval export SRC_DEEP_DEPS="\"$$SRC_DEEP_DEPS \$$$${HDR//[-.]/_}_DEPS\""; \
-				done; \
-				export SRC_DEPS="`echo $$SRC_DEPS $$SRC_DEEP_DEPS | sed 's/  */\n/g' | sort -u`"; \
-				test "$$SRC_DEPS" = "$$SRC_DEPS_OLD" && break; \
-			done; \
-			echo $$SRC $$SRC_DEPS >>$(DEPS); \
-		done; \
-	)
+define Package/redsocks-nft/install
+	$(INSTALL_DIR) $(1)/usr/sbin/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/redsocks $(1)/usr/sbin/
+	$(INSTALL_DIR) $(1)/etc/init.d/
+	$(INSTALL_BIN) files/redsocks.init $(1)/etc/init.d/redsocks
+	$(INSTALL_DATA) files/redsocks.conf.template $(1)/etc/
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_CONF) ./files/redsocks.config $(1)/etc/config/redsocks
+	$(INSTALL_DIR) $(1)/etc/uci-defaults/
+	$(INSTALL_DATA) files/redsocks.uci-default $(1)/etc/uci-defaults/97-redsocks
+	$(INSTALL_DIR) $(1)//usr/share/redsocks/
+	$(INSTALL_DATA) files/firewall.include $(1)/usr/share/redsocks/firewall.include
 
--include $(DEPS)
+endef
 
-$(OUT): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
-
-clean:
-	$(RM) $(OUT) $(CONF) $(OBJS)
-
-distclean: clean
-	$(RM) tags $(DEPS)
-	$(RM) -r gen
-
-tests/__build-tstamp__: $(OUT) tests/[a-z]* tests/[a-z]*/*
-	cd tests && ./build
-	touch $@
-
-tests/prlimit-nofile: tests/prlimit-nofile.c
-	$(CC) $(CFLAGS) -o $@ $^
-
-test: tests/__build-tstamp__ tests/prlimit-nofile
-	cd tests && env $(TEST_ENV) ./run
+$(eval $(call BuildPackage,redsocks-nft))
